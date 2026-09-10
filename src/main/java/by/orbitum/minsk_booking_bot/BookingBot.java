@@ -44,6 +44,11 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
     @Value("${business.work.days}")
     private List<Integer> workDays;
 
+    @Value("${business.time.step.minutes}")
+    private int timeStepMinutes;
+
+    @Value("${business.notification.before.hours}")
+    private int notificationBeforeHours;
 
 
 
@@ -355,7 +360,7 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-       private void handleDateSelectClick(long chatId, int messageId, String serviceId, String selectedDate) {
+        private void handleDateSelectClick(long chatId, int messageId, String serviceId, String selectedDate) {
         ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
         LocalDate localDate = LocalDate.parse(selectedDate);
 
@@ -366,27 +371,32 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         boolean isToday = localDate.equals(LocalDate.now());
 
         for (int hour = workStartHour; hour < workEndHour; hour++) {
-            String timeText = String.format("%02d:00", hour);
-            
-            if (isToday) {
-                if (hour <= currentTime.getHour()) {
+            // Внутри каждого часа бьем время на шаги (например, 0 и 30 минут)
+            for (int mins = 0; mins < 60; mins += timeStepMinutes) {
+                
+                String timeText = String.format("%02d:%02d", hour, mins);
+                
+                if (isToday) {
+                    // Защита от прошедшего времени: сравниваем текущий час и минуту
+                    if (hour < currentTime.getHour() || (hour == currentTime.getHour() && mins <= currentTime.getMinute())) {
+                        continue; 
+                    }
+                }
+
+                boolean isTimeBusy = appointmentRepository.existsByBookingDateAndBookingTime(localDate, timeText);
+                if (isTimeBusy) {
                     continue; 
                 }
+
+                String callbackData = "time_" + serviceId + "_" + selectedDate + "_" + timeText;
+
+                InlineKeyboardButton button = InlineKeyboardButton.builder()
+                        .text("⏰ " + timeText)
+                        .callbackData(callbackData)
+                        .build();
+                
+                rows.add(new InlineKeyboardRow(button));
             }
-
-            boolean isTimeBusy = appointmentRepository.existsByBookingDateAndBookingTime(localDate, timeText);
-            if (isTimeBusy) {
-                continue; 
-            }
-
-            String callbackData = "time_" + serviceId + "_" + selectedDate + "_" + timeText;
-
-            InlineKeyboardButton button = InlineKeyboardButton.builder()
-                    .text("⏰ " + timeText)
-                    .callbackData(callbackData)
-                    .build();
-            
-            rows.add(new InlineKeyboardRow(button));
         }
 
         InlineKeyboardButton buttonBack = InlineKeyboardButton.builder()
@@ -438,7 +448,7 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         EditMessageText editMessage = EditMessageText.builder()
                 .chatId(chatId)
                 .messageId(messageId)
-                .text("🎉 Поздравляем! Вы успешно записаны!\n\n🏷 Услуга: " + serviceName + "\n📅 Дата: " + date + "\n⏰ Время: " + time + "\n\nДанные железно сохранены в базу данных PostgreSQL! 📋")
+                .text("🎉 Поздравляем! Вы успешно записаны!\n\n🏷 Услуга: " + serviceName + "\n📅 Дата: " + date + "\n⏰ Время: " + time + "\n\nДанные железно сохранены! 📋")
                 .build();
         editMessage.setReplyMarkup(markup);
 
@@ -461,7 +471,7 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         if (allAppointments.isEmpty()) {
             responseText = "⚙️ Панель директора\n\nВ салоне пока нет активных записей на сегодня и будущие дни. 🤷‍♂️";
         } else {
-            StringBuilder sb = new StringBuilder("⚙️ Панель директора\n\n📌 Актуальное расписание (прошлые дни скрыты): ✨\n\n");
+            StringBuilder sb = new StringBuilder("⚙️ Панель директора\n\n📌 Актуальное расписание: ✨\n\n");
             
             DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
             

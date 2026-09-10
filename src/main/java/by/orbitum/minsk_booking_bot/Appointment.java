@@ -18,16 +18,17 @@ public class Appointment {
     private String serviceName;    // Название услуги
     private LocalDate bookingDate; // Дата (например, 2026-09-07)
     private String bookingTime;    // Время (например, "15:00")
+    private boolean notified = false; 
 
-    // Пустой конструктор для Hibernate
     public Appointment() {}
 
-    // Удобный конструктор
+
     public Appointment(Long clientTelegramId, String serviceName, LocalDate bookingDate, String bookingTime) {
         this.clientTelegramId = clientTelegramId;
         this.serviceName = serviceName;
         this.bookingDate = bookingDate;
         this.bookingTime = bookingTime;
+        this.notified = false;
     }
 
     // Геттеры
@@ -36,4 +37,6 @@ public class Appointment {
     public String getServiceName() { return serviceName; }
     public LocalDate getBookingDate() { return bookingDate; }
     public String getBookingTime() { return bookingTime; }
+    public boolean isNotified() { return notified; }
+    public void setNotified(boolean notified) { this.notified = notified;}
 }
