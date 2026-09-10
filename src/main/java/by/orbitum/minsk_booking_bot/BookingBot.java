@@ -28,7 +28,7 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
     private final BeautyServiceRepository serviceRepository;
     private final BookingClientRepository clientRepository;
     private final AppointmentRepository appointmentRepository;
-        // Читаем настройки времени из файла application.properties
+
     @Value("${business.work.start}")
     private int workStartHour;
 
@@ -40,6 +40,10 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
 
     @Value("${business.max.bookings.per.service}")
     private int maxBookingsPerService;
+
+    @Value("${business.work.days}")
+    private List<Integer> workDays;
+
 
 
 
@@ -65,7 +69,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
     public void consume(List<Update> updates) {
         for (Update update : updates) {
             
-            // 1. Обработка текстовых команд (например, /start)
             if (update.hasMessage() && update.getMessage().hasText()) {
                 String messageText = update.getMessage().getText();
                 long chatId = update.getMessage().getChatId();
@@ -76,7 +79,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
                 }
             } 
             
-            // 2. Обработка нажатий на ВСЕ инлайн-кнопки
             else if (update.hasCallbackQuery()) {
                 String callbackData = update.getCallbackQuery().getData();
                 long chatId = update.getCallbackQuery().getMessage().getChatId();
@@ -89,7 +91,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
                 } else if (callbackData.equals("button_main_menu")) {
                     handleMainMenuClick(chatId, messageId);
                 } else if (callbackData.equals("button_admin_panel")) {
-                    // Ловушка для админки директора салона
                     handleAdminPanelClick(chatId, messageId);
                 } else if (callbackData.startsWith("service_")) {
                     String serviceId = callbackData.split("_")[1];
@@ -107,13 +108,16 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
                     String date = parts[2];
                     String time = parts[3];
                     handleFinalConfirmationClick(chatId, messageId, serviceId, date, time);
+                } else if (callbackData.startsWith("cancel_")) {
+                    String appointmentId = callbackData.replace("cancel_", "");
+                    handleCancelBookingClick(chatId, messageId, appointmentId);
                 }
+
 
             }
         }
     }
 
-    // Метод регистрации клиента вынесли отдельно, чтобы не загромождать consume
     private void registerClient(User tgUser) {
         long telegramId = tgUser.getId();
         if (!clientRepository.existsById(telegramId)) {
@@ -124,18 +128,16 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
                 tgUser.getUserName()
             );
             clientRepository.save(newClient);
-            System.out.println(">>> Зарегистрирован новый клиент из Минска: " + tgUser.getFirstName() + " <<<");
+            System.out.println(">>> Зарегистрирован новый клиент из Минска: " + tgUser.getFirstName());
         }
     }
 
-    // Первое приветственное сообщение (новое)
     private void sendWelcomeMessage(long chatId) {
         SendMessage message = SendMessage.builder()
                 .chatId(chatId)
-                .text("Привет! Добро пожаловать в сервис записи для бизнеса в Минске. Что хочешь сделать?")
+                .text("Привет! Добро пожаловать в сервис записи в Минске. Что хочешь сделать?")
                 .build();
         
-        // Передаем chatId в метод создания клавиатуры
         message.setReplyMarkup(createMainMenuKeyboard(chatId));
 
         try {
@@ -149,10 +151,9 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         EditMessageText editMessage = EditMessageText.builder()
                 .chatId(chatId)
                 .messageId(messageId)
-                .text("Привет! Добро пожаловать в сервис записи для бизнеса в Минске. Что хочешь сделать?")
+                .text("Привет! Добро пожаловать в сервис записи в Минске. Что хочешь сделать?")
                 .build();
         
-        // Передаем chatId в метод создания клавиатуры
         editMessage.setReplyMarkup(createMainMenuKeyboard(chatId));
 
         try {
@@ -162,11 +163,9 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-    // Вспомогательный метод для создания кнопок главного меню
         private InlineKeyboardMarkup createMainMenuKeyboard(long chatId) {
         ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
 
-        // Эти кнопки видят ВСЕ пользователи
         InlineKeyboardButton buttonBook = InlineKeyboardButton.builder()
                 .text("📅 Записаться на услугу")
                 .callbackData("button_book")
@@ -192,7 +191,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
     }
 
 
-    // Экран выбора услуг
     private void handleBookingClick(long chatId, int messageId) {
         List<BeautyService> services = serviceRepository.findAll();
         ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
@@ -209,7 +207,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
             rows.add(new InlineKeyboardRow(button));
         }
 
-        // Добавляем в самый низ кнопку Назад
         InlineKeyboardButton buttonBack = InlineKeyboardButton.builder()
                 .text("🔙 Назад в меню")
                 .callbackData("button_main_menu")
@@ -232,40 +229,42 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-    // Экран "Мои записи" с кнопкой Назад
-    private void handleMyBookingsClick(long chatId, int messageId) {
-        // 1. Ищем в базе данных все записи этого пользователя по его chatId (он равен Telegram ID)
-        List<Appointment> myAppointments = appointmentRepository.findAllByClientTelegramId(chatId);
+        private void handleMyBookingsClick(long chatId, int messageId) {
+        List<Appointment> myAppointments = appointmentRepository.findAllByClientTelegramIdAndBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(chatId, LocalDate.now());
 
+        ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
         String responseText;
 
-        // 2. Проверяем, нашли ли мы что-нибудь
         if (myAppointments.isEmpty()) {
-            responseText = "У вас пока нет активных записей. 🗂\nЧтобы записаться, выберите соответствующий пункт в меню.";
+            responseText = "У вас пока нет активных будущих записей. 🗂";
         } else {
-            // Если записи есть, собираем их в один красивый текст
             StringBuilder sb = new StringBuilder("📋 Ваши активные записи:\n\n");
-            
             for (int i = 0; i < myAppointments.size(); i++) {
                 Appointment app = myAppointments.get(i);
-                sb.append(i + 1).append(". ✨ ").append(app.getServiceName()).append("\n")
+                sb.append("Запись №").append(i + 1).append("\n")
+                  .append("✨ ").append(app.getServiceName()).append("\n")
                   .append("📅 Дата: ").append(app.getBookingDate()).append("\n")
                   .append("⏰ Время: ").append(app.getBookingTime()).append("\n")
-                  .append("-------------------------\n");
+                  .append("─────────────────────────\n");
+
+                // Создаем кнопку отмены КОНКРЕТНО для этой записи
+                InlineKeyboardButton buttonCancel = InlineKeyboardButton.builder()
+                        .text("❌ Отменить запись №" + (i + 1))
+                        .callbackData("cancel_" + app.getId()) // Зашиваем ID записи из PostgreSQL
+                        .build();
+                rows.add(new InlineKeyboardRow(buttonCancel));
             }
-            
             responseText = sb.toString();
         }
 
-        // 3. Создаем кнопку возврата в главное меню
         InlineKeyboardButton buttonBack = InlineKeyboardButton.builder()
                 .text("🔙 Назад в меню")
                 .callbackData("button_main_menu")
                 .build();
-        InlineKeyboardRow row = new InlineKeyboardRow(buttonBack);
-        InlineKeyboardMarkup markup = new InlineKeyboardMarkup(List.of(row));
+        rows.add(new InlineKeyboardRow(buttonBack));
 
-        // 4. Редактируем старое сообщение, выводя список записей
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup(rows);
+
         EditMessageText editMessage = EditMessageText.builder()
                 .chatId(chatId)
                 .messageId(messageId)
@@ -280,17 +279,12 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-
-    // НОВЫЙ ЭКРАН: Выбор Даты после выбора услуги
-       private void handleServiceSelectClick(long chatId, int messageId, String serviceId) {
-        // Находим выбранную услугу, чтобы узнать её имя
+    private void handleServiceSelectClick(long chatId, int messageId, String serviceId) {
         BeautyService selectedService = serviceRepository.findById(Long.parseLong(serviceId)).orElse(null);
         String serviceName = (selectedService != null) ? selectedService.getName() : "Услуга";
 
-        // 💥 ПРОВЕРКА ЛИМИТА: Считаем в PostgreSQL, сколько активных записей у этого chatId на эту услугу
-        long currentBookingsCount = appointmentRepository.countByClientTelegramIdAndServiceName(chatId, serviceName);
+        long currentBookingsCount = appointmentRepository.countByClientTelegramIdAndServiceNameAndBookingDateGreaterThanEqual(chatId, serviceName, LocalDate.now());
 
-        // Если клиент уперся в лимит из application.properties
         if (currentBookingsCount >= maxBookingsPerService) {
             InlineKeyboardButton buttonBack = InlineKeyboardButton.builder()
                     .text("🔙 К выбору услуг")
@@ -311,15 +305,23 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
             } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
-            return; // Останавливаем метод, дальше к выбору дат не пускаем!
+            return;
         }
 
-        // Если лимит не превышен — идет наш стандартный код выбора дат:
         ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM (EE)");
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 5; i++) {
             LocalDate date = LocalDate.now().plusDays(i);
+            
+            int dayOfWeekNumber = date.getDayOfWeek().getValue();
+            
+            int isWorkingDay = workDays.get(dayOfWeekNumber - 1);
+
+            if (isWorkingDay == 0) {
+                continue; 
+            }
+
             String prefix = (i == 0) ? "Сегодня " : (i == 1) ? "Завтра " : "";
             String buttonText = prefix + date.format(formatter);
             String callbackData = "date_" + serviceId + "_" + date.toString(); 
@@ -342,7 +344,7 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         EditMessageText editMessage = EditMessageText.builder()
                 .chatId(chatId)
                 .messageId(messageId)
-                .text("Принято! Теперь выберите удобный день для визита: 📅")
+                .text("Принято! Выберите удобный день (бот показывает только рабочие дни салона): 📅")
                 .build();
         editMessage.setReplyMarkup(markup);
 
@@ -353,27 +355,30 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-
-
-    // НОВЫЙ ЭКРАН: Подтверждение даты (заглушка для следующего шага)
-         // 💥 ИЗМЕНЯЕМ АРГУМЕНТЫ: теперь метод принимает еще и serviceId
-    private void handleDateSelectClick(long chatId, int messageId, String serviceId, String selectedDate) {
+       private void handleDateSelectClick(long chatId, int messageId, String serviceId, String selectedDate) {
         ArrayList<InlineKeyboardRow> rows = new ArrayList<>();
         LocalDate localDate = LocalDate.parse(selectedDate);
 
-        // Находим выбранную услугу в базе по ID, чтобы узнать её реальное имя ("Коррекция бровей" и т.д.)
         BeautyService selectedService = serviceRepository.findById(Long.parseLong(serviceId)).orElse(null);
         String serviceName = (selectedService != null) ? selectedService.getName() : "Услуга";
+
+        java.time.LocalTime currentTime = java.time.LocalTime.now();
+        boolean isToday = localDate.equals(LocalDate.now());
 
         for (int hour = workStartHour; hour < workEndHour; hour++) {
             String timeText = String.format("%02d:00", hour);
             
+            if (isToday) {
+                if (hour <= currentTime.getHour()) {
+                    continue; 
+                }
+            }
+
             boolean isTimeBusy = appointmentRepository.existsByBookingDateAndBookingTime(localDate, timeText);
             if (isTimeBusy) {
                 continue; 
             }
 
-            // 💥 ИЗМЕНЯЕМ ТУТ: зашиваем в callback всё вместе: "time_IDуслуги_Дата_Время"
             String callbackData = "time_" + serviceId + "_" + selectedDate + "_" + timeText;
 
             InlineKeyboardButton button = InlineKeyboardButton.builder()
@@ -392,7 +397,6 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
 
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup(rows);
 
-        // Сделали заголовок еще круче — теперь пишется конкретная услуга!
         String headerText = "Выбранная услуга: 🏷 " + serviceName + "\n" +
                             "Выбранная дата: 📅 " + selectedDate + "\n" +
                             "───────────────────\n" +
@@ -413,17 +417,12 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
         }
     }
 
-
-
-        // 💥 ИЗМЕНЯЕМ АРГУМЕНТЫ: метод теперь принимает и serviceId
     private void handleFinalConfirmationClick(long chatId, int messageId, String serviceId, String date, String time) {
         LocalDate localDate = LocalDate.parse(date); 
         
-        // Находим услугу в базе, чтобы сохранить её настоящее имя
         BeautyService selectedService = serviceRepository.findById(Long.parseLong(serviceId)).orElse(null);
         String serviceName = (selectedService != null) ? selectedService.getName() : "Бьюти-услуга";
 
-        // 💥 СОХРАНЯЕМ НАСТОЯЩЕЕ НАЗВАНИЕ УСЛУГИ В БАЗУ ДАННЫХ!
         Appointment newAppointment = new Appointment(chatId, serviceName, localDate, time);
         appointmentRepository.save(newAppointment);
         
@@ -451,26 +450,27 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
     }
 
 
-            private void handleAdminPanelClick(long chatId, int messageId) {
+        private void handleAdminPanelClick(long chatId, int messageId) {
         if (!adminIds.contains(chatId)) {
             return;
         }
 
-        // 💥 ИЗМЕНЯЕМ ТУТ: Вытаскиваем все записи, но уже ИДЕАЛЬНО ОРТСОЛТИРОВАННЫЕ по дате и времени!
-        List<Appointment> allAppointments = appointmentRepository.findAllByOrderByBookingDateAscBookingTimeAsc();
+        List<Appointment> allAppointments = appointmentRepository.findAllByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(LocalDate.now());
         String responseText;
 
         if (allAppointments.isEmpty()) {
-            responseText = "⚙️ Панель директора\n\nВ салоне пока нет ни одной записи клиентов. 🤷‍♂️";
+            responseText = "⚙️ Панель директора\n\nВ салоне пока нет активных записей на сегодня и будущие дни. 🤷‍♂️";
         } else {
-            StringBuilder sb = new StringBuilder("⚙️ Панель директора\n\n📌 Расписание всех записей (по порядку): ✨\n\n");
+            StringBuilder sb = new StringBuilder("⚙️ Панель директора\n\n📌 Актуальное расписание (прошлые дни скрыты): ✨\n\n");
             
-            // Форматируем красивый вывод даты
             DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
             
             for (int i = 0; i < allAppointments.size(); i++) {
                 Appointment app = allAppointments.get(i);
-                sb.append(i + 1).append(". 📅 ").append(app.getBookingDate().format(dateFormatter))
+
+                String todayLabel = app.getBookingDate().equals(LocalDate.now()) ? " [СЕГОДНЯ]" : "";
+
+                sb.append(i + 1).append(". 📅 ").append(app.getBookingDate().format(dateFormatter)).append(todayLabel)
                   .append(" в ").append(app.getBookingTime()).append("\n")
                   .append("   🏷 Услуга: ").append(app.getServiceName()).append("\n")
                   .append("   👤 Клиент ID: ").append(app.getClientTelegramId()).append("\n")
@@ -499,6 +499,54 @@ public class BookingBot implements SpringLongPollingBot, LongPollingUpdateConsum
             e.printStackTrace();
         }
     }
+
+
+        private void handleCancelBookingClick(long chatId, int messageId, String appointmentIdStr) {
+        Long appointmentId = Long.parseLong(appointmentIdStr);
+        
+        // Достаем запись из PostgreSQL
+        Appointment appointment = appointmentRepository.findById(appointmentId).orElse(null);
+
+        if (appointment == null) {
+            return;
+        }
+
+        //  Проверяем, принадлежит ли эта запись тому, кто нажал на кнопку
+        if (!appointment.getClientTelegramId().equals(chatId)) {
+            System.out.println("⚠️ Попытка взлома! Пользователь " + chatId + " пытался удалить чужую запись №" + appointmentId);
+            return;
+        }
+
+        // Проверяем, не является ли запись вчерашней/прошлой
+        if (appointment.getBookingDate().isBefore(LocalDate.now())) {
+            System.out.println("⚠️ Попытка удалить старую запись из прошлого!");
+            return; 
+        }
+
+        appointmentRepository.deleteById(appointmentId);
+        System.out.println(">>> Запись №" + appointmentId + " успешно удалена из PostgreSQL кликом клиента <<<");
+
+        InlineKeyboardButton buttonBack = InlineKeyboardButton.builder()
+                .text("🔙 В главное меню")
+                .callbackData("button_main_menu")
+                .build();
+        InlineKeyboardRow row = new InlineKeyboardRow(buttonBack);
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup(List.of(row));
+
+        EditMessageText editMessage = EditMessageText.builder()
+                .chatId(chatId)
+                .messageId(messageId)
+                .text("🗑 Запись успешно отменена!\n\nЭто время снова свободно в календаре для других клиентов. 🔄")
+                .build();
+        editMessage.setReplyMarkup(markup);
+
+        try {
+            telegramClient.execute(editMessage);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
 }
     
 

@@ -9,13 +9,14 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface AppointmentRepository extends JpaRepository<Appointment, Long> {
     
-    List<Appointment> findAllByClientTelegramId(Long clientTelegramId);
+    List<Appointment> findAllByClientTelegramIdAndBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(Long clientTelegramId, LocalDate date);
 
     boolean existsByBookingDateAndBookingTime(LocalDate bookingDate, String bookingTime);
 
-    // 💥 Подсчитать, сколько раз этот клиент записался на услугу с конкретным именем
-    long countByClientTelegramIdAndServiceName(Long clientTelegramId, String serviceName);
+    long countByClientTelegramIdAndServiceNameAndBookingDateGreaterThanEqual(Long clientTelegramId, String serviceName, LocalDate date);
 
-    // 💥 Вытащить ВСЕ записи из базы и автоматически отсортировать их: сначала по Дате, а внутри даты — по Времени!
     List<Appointment> findAllByOrderByBookingDateAscBookingTimeAsc();
+
+    // 💥 НОВЫЙ МЕТОД ДЛЯ АДМИНА: Находит все записи, начиная с указанной даты (сортировка от ранних к поздним)
+    List<Appointment> findAllByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(LocalDate date);
 }
